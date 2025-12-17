@@ -35,7 +35,7 @@ async def update_economic_events():
     print(f"Connexion réussie au serveur : {guild.name}")
     print("Mise à jour du calendrier économique en cours...")
 
-    url = "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json"
+    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
     try:
         response = requests.get(url, timeout=15)
@@ -61,7 +61,7 @@ async def update_economic_events():
     created_count = 0
 
     for event in events:
-        # Impact : "High", "Medium", "Low", "Holiday"
+        # Filtre impact High/Medium
         if event.get('impact') not in ['High', 'Medium']:
             continue
 
@@ -71,10 +71,10 @@ async def update_economic_events():
         if len(full_name) > 100:
             full_name = full_name[:97] + "..."
 
-        # Date/heure en UTC (déjà timestamp avec timezone)
+        # Date/heure (format ISO avec Z pour UTC)
         try:
             event_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
-        except ValueError:
+        except (ValueError, KeyError):
             continue
 
         if not (today <= event_time.date() <= end_date):
