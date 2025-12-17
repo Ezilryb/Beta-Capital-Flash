@@ -35,6 +35,8 @@ async def update_economic_events():
     print(f"Connexion réussie au serveur : {guild.name}")
     print("Mise à jour du calendrier économique en cours...")
 
+    now = datetime.now(timezone.utc)  # Heure actuelle en UTC
+
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
     try:
@@ -49,10 +51,8 @@ async def update_economic_events():
         print("Aucune donnée reçue.")
         return
 
-    today = datetime.now(timezone.utc).date()
-    end_date = today + timedelta(days=15)
+    end_date = now.date() + timedelta(days=15)
 
-    # Correction ici : start_time au lieu de scheduled_start_time
     try:
         existing_events = {event.name: event.start_time for event in await guild.fetch_scheduled_events()}
     except Exception as e:
@@ -60,6 +60,7 @@ async def update_economic_events():
         return
 
     created_count = 0
+    skipped_past_count = 0
 
     for event in events:
         if event.get('impact') not in ['High', 'Medium']:
@@ -72,16 +73,22 @@ async def update_economic_events():
             full_name = full_name[:97] + "..."
 
         try:
+            # Date en UTC (remplace Z par +00:00 pour aware datetime)
             event_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
         except (ValueError, KeyError):
             continue
 
-        if not (today <= event_time.date() <= end_date):
+        # Ignorer si déjà passé
+        if event_time <= now:
+            skipped_past_count += 1
+            continue
+
+        # Limite à 15 jours max dans le futur
+        if event_time.date() > end_date:
             continue
 
         end_time = event_time + timedelta(hours=1)
 
-        # Vérification doublon avec le bon attribut
         if full_name in existing_events and existing_events[full_name] == event_time:
             continue
 
@@ -113,7 +120,7 @@ async def update_economic_events():
         except Exception as e:
             print(f"Erreur création événement {full_name} : {type(e).__name__}: {e}")
 
-    print(f"Mise à jour terminée. {created_count} nouveaux événements ajoutés.")
+    print(f"Mise à jour terminée. {created_count} nouveaux événements créés, {skipped_past_count} événements passés ignorés.")
 
 @bot.command(name='updatecal')
 @commands.has_permissions(administrator=True)
