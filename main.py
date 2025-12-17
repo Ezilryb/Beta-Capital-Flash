@@ -52,16 +52,16 @@ async def update_economic_events():
     today = datetime.now(timezone.utc).date()
     end_date = today + timedelta(days=15)
 
+    # Correction ici : start_time au lieu de scheduled_start_time
     try:
-        existing_events = {event.name: event.scheduled_start_time for event in await guild.fetch_scheduled_events()}
+        existing_events = {event.name: event.start_time for event in await guild.fetch_scheduled_events()}
     except Exception as e:
-        print(f"Erreur récupération événements existants : {e}")
+        print(f"Erreur récupération événements existants : {type(e).__name__}: {e}")
         return
 
     created_count = 0
 
     for event in events:
-        # Filtre impact High/Medium
         if event.get('impact') not in ['High', 'Medium']:
             continue
 
@@ -71,7 +71,6 @@ async def update_economic_events():
         if len(full_name) > 100:
             full_name = full_name[:97] + "..."
 
-        # Date/heure (format ISO avec Z pour UTC)
         try:
             event_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
         except (ValueError, KeyError):
@@ -80,14 +79,12 @@ async def update_economic_events():
         if not (today <= event_time.date() <= end_date):
             continue
 
-        # Fin de l'événement : +1 heure (obligatoire pour EXTERNAL)
         end_time = event_time + timedelta(hours=1)
 
-        # Vérifier doublon
+        # Vérification doublon avec le bon attribut
         if full_name in existing_events and existing_events[full_name] == event_time:
             continue
 
-        # Détails
         actual = event.get('actual', 'N/A')
         forecast = event.get('forecast', 'N/A')
         previous = event.get('previous', 'N/A')
@@ -105,13 +102,13 @@ async def update_economic_events():
             await guild.create_scheduled_event(
                 name=full_name,
                 start_time=event_time,
-                end_time=end_time,  # Ajout obligatoire
+                end_time=end_time,
                 entity_type=discord.EntityType.external,
                 location='Marché Mondial',
                 description=description[:1000],
                 privacy_level=discord.PrivacyLevel.guild_only
             )
-            print(f"Événement créé : {full_name} le {event_time} (fin {end_time})")
+            print(f"Événement créé : {full_name} le {event_time}")
             created_count += 1
         except Exception as e:
             print(f"Erreur création événement {full_name} : {type(e).__name__}: {e}")
