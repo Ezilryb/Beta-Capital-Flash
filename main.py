@@ -1,6 +1,7 @@
 import discord
 from discord.ext import tasks, commands
 import requests
+import feedparser
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os
@@ -8,7 +9,6 @@ import os
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-FMP_API_KEY = os.getenv('FMP_API_KEY')  # Ta clé FMP
 GUILD_ID = int(os.getenv('GUILD_ID'))
 
 intents = discord.Intents.default()
@@ -36,67 +36,66 @@ async def update_economic_events():
     print(f"Connexion réussie au serveur : {guild.name}")
     print("Mise à jour du calendrier économique en cours...")
 
-    # Dates pour les 15 prochains jours (FMP accepte from/to au format YYYY-MM-DD)
+    # RSS Forex Factory (high + medium impact, global, mis à jour en temps réel)
+    rss_url = "https://www.forexfactory.com/ff_calendar_thisweek.xml"
+
+    try:
+        feed = feedparser.parse(rss_url)
+    except Exception as e:
+        print(f"Erreur parsing RSS Forex Factory : {e}")
+        return
+
+    if not feed.entries:
+        print("Aucune donnée dans le RSS.")
+        return
+
     today = datetime.now(timezone.utc).date()
     end_date = today + timedelta(days=15)
-    from_date = today.strftime('%Y-%m-%d')
-    to_date = end_date.strftime('%Y-%m-%d')
 
-    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
-
-    try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        events = response.json()
-    except Exception as e:
-        print(f"Erreur lors de la requête API FMP : {e}")
-        return
-
-    if not events:
-        print("Aucune donnée reçue de l'API.")
-        return
-
-    # Récupérer les événements existants
-    try:
-        existing_events = {event.name: event.scheduled_start_time for event in await guild.fetch_scheduled_events()}
-    except Exception as e:
-        print(f"Erreur récupération événements existants : {e}")
-        return
+    existing_events = {event.name: event.scheduled_start_time for event in await guild.fetch_scheduled_events()}
 
     created_count = 0
 
-    for event in events:
-        # Filtre impact high/medium (FMP utilise 'impact': 'High', 'Medium', 'Low')
-        if event.get('impact', '').lower() not in ['high', 'medium']:
+    for entry in feed.entries:
+        # Impact (high = red, medium = orange, low = yellow, holiday = gray)
+        impact = entry.get('impact', '').lower()
+        if impact not in ['high', 'medium', 'orange', 'red']:
             continue
 
-        country = event.get('country', 'Unknown')
-        event_name = event.get('event', 'Unknown Event')
-        full_name = f"{country} - {event_name}"
-        if len(full_name) > 100:
-            full_name = full_name[:97] + "..."
+        # Date/heure (dans <time> tag, format YYYY-MM-DDTHH:MM:SS+00:00)
+        event_time_str = entry.get('time')
+        if not event_time_str:
+            continue
 
-        # Date/heure (format YYYY-MM-DD HH:MM:SS, déjà en UTC)
         try:
-            event_time_str = f"{event['date']} {event.get('time', '00:00:00')}"
-            event_time = datetime.strptime(event_time_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+            # Forex Factory utilise souvent date + time séparés, mais RSS combine
+            event_time = datetime.strptime(event_time_str, '%Y-%m-%dT%H:%M:%S%z')
+            event_time = event_time.astimezone(timezone.utc)  # Normalise UTC
         except ValueError:
             continue
 
-        # Vérifier doublon
+        if not (today <= event_time.date() <= end_date):
+            continue
+
+        country = entry.get('country', 'Unknown')
+        title = entry.get('title', 'Unknown Event')
+        full_name = f"{country} - {title}"
+        if len(full_name) > 100:
+            full_name = full_name[:97] + "..."
+
         if full_name in existing_events and existing_events[full_name] == event_time:
             continue
 
         # Détails
-        actual = event.get('actual', 'N/A')
-        estimate = event.get('estimate', 'N/A')  # forecast
-        previous = event.get('previous', 'N/A')
+        actual = entry.get('actual', 'N/A')
+        forecast = entry.get('forecast', 'N/A')
+        previous = entry.get('previous', 'N/A')
 
-        impact_label = "Élevé" if event['impact'].lower() == 'high' else "Moyen"
+        impact_label = "Élevé" if impact in ['high', 'red'] else "Moyen"
 
         description = (
             f"Impact : {impact_label}\n"
-            f"Prévision : {estimate}\n"
+            f"Prévision : {forecast}\n"
             f"Actuel : {actual}\n"
             f"Précédent : {previous}"
         )
