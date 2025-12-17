@@ -102,15 +102,15 @@ async def update_economic_events():
             await guild.create_scheduled_event(
                 name=full_name,
                 start_time=event_time,
-                entity_type=discord.ScheduledEventEntityType.external,
-                metadata=discord.ScheduledEventMetadata(location='Marché Mondial'),
+                entity_type=discord.EntityType.external,  # Changement ici
+                location='Marché Mondial',  # Chaîne simple ici
                 description=description[:1000],
-                privacy_level=discord.ScheduledEventPrivacyLevel.guild_only
+                privacy_level=discord.PrivacyLevel.guild_only
             )
             print(f"Événement créé : {full_name} le {event_time}")
             created_count += 1
         except Exception as e:
-            print(f"Erreur création événement : {e}")
+            print(f"Erreur création événement {full_name} : {type(e).__name__}: {e}")
 
     print(f"Mise à jour terminée. {created_count} nouveaux événements ajoutés.")
 
