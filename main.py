@@ -1,7 +1,6 @@
 import discord
 from discord.ext import tasks, commands
 import requests
-import feedparser
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os
@@ -36,62 +35,61 @@ async def update_economic_events():
     print(f"Connexion réussie au serveur : {guild.name}")
     print("Mise à jour du calendrier économique en cours...")
 
-    # RSS Forex Factory (high + medium impact, global, mis à jour en temps réel)
-    rss_url = "https://www.forexfactory.com/ff_calendar_thisweek.xml"
+    url = "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json"
 
     try:
-        feed = feedparser.parse(rss_url)
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        events = response.json()
     except Exception as e:
-        print(f"Erreur parsing RSS Forex Factory : {e}")
+        print(f"Erreur lors du fetch des données Forex Factory : {e}")
         return
 
-    if not feed.entries:
-        print("Aucune donnée dans le RSS.")
+    if not events:
+        print("Aucune donnée reçue.")
         return
 
     today = datetime.now(timezone.utc).date()
     end_date = today + timedelta(days=15)
 
-    existing_events = {event.name: event.scheduled_start_time for event in await guild.fetch_scheduled_events()}
+    try:
+        existing_events = {event.name: event.scheduled_start_time for event in await guild.fetch_scheduled_events()}
+    except Exception as e:
+        print(f"Erreur récupération événements existants : {e}")
+        return
 
     created_count = 0
 
-    for entry in feed.entries:
-        # Impact (high = red, medium = orange, low = yellow, holiday = gray)
-        impact = entry.get('impact', '').lower()
-        if impact not in ['high', 'medium', 'orange', 'red']:
+    for event in events:
+        # Impact : "High", "Medium", "Low", "Holiday"
+        if event.get('impact') not in ['High', 'Medium']:
             continue
 
-        # Date/heure (dans <time> tag, format YYYY-MM-DDTHH:MM:SS+00:00)
-        event_time_str = entry.get('time')
-        if not event_time_str:
-            continue
+        country = event.get('country', 'Unknown')
+        title = event.get('title', 'Unknown Event')
+        full_name = f"{country} - {title}"
+        if len(full_name) > 100:
+            full_name = full_name[:97] + "..."
 
+        # Date/heure en UTC (déjà timestamp avec timezone)
         try:
-            # Forex Factory utilise souvent date + time séparés, mais RSS combine
-            event_time = datetime.strptime(event_time_str, '%Y-%m-%dT%H:%M:%S%z')
-            event_time = event_time.astimezone(timezone.utc)  # Normalise UTC
+            event_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
         except ValueError:
             continue
 
         if not (today <= event_time.date() <= end_date):
             continue
 
-        country = entry.get('country', 'Unknown')
-        title = entry.get('title', 'Unknown Event')
-        full_name = f"{country} - {title}"
-        if len(full_name) > 100:
-            full_name = full_name[:97] + "..."
-
+        # Vérifier doublon
         if full_name in existing_events and existing_events[full_name] == event_time:
             continue
 
         # Détails
-        actual = entry.get('actual', 'N/A')
-        forecast = entry.get('forecast', 'N/A')
-        previous = entry.get('previous', 'N/A')
+        actual = event.get('actual', 'N/A')
+        forecast = event.get('forecast', 'N/A')
+        previous = event.get('previous', 'N/A')
 
-        impact_label = "Élevé" if impact in ['high', 'red'] else "Moyen"
+        impact_label = "Élevé" if event['impact'] == 'High' else "Moyen"
 
         description = (
             f"Impact : {impact_label}\n"
@@ -112,7 +110,7 @@ async def update_economic_events():
             print(f"Événement créé : {full_name} le {event_time}")
             created_count += 1
         except Exception as e:
-            print(f"Erreur création : {e}")
+            print(f"Erreur création événement : {e}")
 
     print(f"Mise à jour terminée. {created_count} nouveaux événements ajoutés.")
 
