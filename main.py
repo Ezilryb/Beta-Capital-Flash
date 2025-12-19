@@ -12,6 +12,7 @@ GUILD_ID = int(os.getenv('GUILD_ID'))
 
 intents = discord.Intents.default()
 intents.guild_scheduled_events = True
+intents.message_content = True  # Ajout explicite pour les commandes
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -27,15 +28,12 @@ async def update_economic_events():
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         print(f"ERREUR : Guild non trouvé avec l'ID {GUILD_ID}")
-        print("Serveurs disponibles :")
-        for g in bot.guilds:
-            print(f" - {g.name} (ID: {g.id})")
         return
 
     print(f"Connexion réussie au serveur : {guild.name}")
     print("Mise à jour du calendrier économique en cours...")
 
-    now = datetime.now(timezone.utc)  # Heure actuelle en UTC
+    now = datetime.now(timezone.utc)
 
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
@@ -44,7 +42,7 @@ async def update_economic_events():
         response.raise_for_status()
         events = response.json()
     except Exception as e:
-        print(f"Erreur lors du fetch des données Forex Factory : {e}")
+        print(f"Erreur fetch Forex Factory : {e}")
         return
 
     if not events:
@@ -56,7 +54,7 @@ async def update_economic_events():
     try:
         existing_events = {event.name: event.start_time for event in await guild.fetch_scheduled_events()}
     except Exception as e:
-        print(f"Erreur récupération événements existants : {type(e).__name__}: {e}")
+        print(f"Erreur récupération événements : {type(e).__name__}: {e}")
         return
 
     created_count = 0
@@ -73,17 +71,14 @@ async def update_economic_events():
             full_name = full_name[:97] + "..."
 
         try:
-            # Date en UTC (remplace Z par +00:00 pour aware datetime)
             event_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
         except (ValueError, KeyError):
             continue
 
-        # Ignorer si déjà passé
         if event_time <= now:
             skipped_past_count += 1
             continue
 
-        # Limite à 15 jours max dans le futur
         if event_time.date() > end_date:
             continue
 
@@ -118,15 +113,18 @@ async def update_economic_events():
             print(f"Événement créé : {full_name} le {event_time}")
             created_count += 1
         except Exception as e:
-            print(f"Erreur création événement {full_name} : {type(e).__name__}: {e}")
+            print(f"Erreur création {full_name} : {type(e).__name__}: {e}")
 
-    print(f"Mise à jour terminée. {created_count} nouveaux événements créés, {skipped_past_count} événements passés ignorés.")
+    print(f"Mise à jour terminée. {created_count} nouveaux événements créés, {skipped_past_count} passés ignorés.")
 
 @bot.command(name='updatecal')
 @commands.has_permissions(administrator=True)
 async def manual_update(ctx):
-    await ctx.send("Mise à jour forcée en cours...")
-    await update_economic_events()
-    await ctx.send("Mise à jour terminée !")
+    try:
+        msg = await ctx.send("🔄 Mise à jour forcée du calendrier en cours...")
+        await update_economic_events()
+        await msg.edit(content="✅ Mise à jour terminée ! Vérifie l'onglet Événements.")
+    except Exception as e:
+        await ctx.send(f"Erreur lors de la mise à jour : {e}")
 
 bot.run(DISCORD_TOKEN)
